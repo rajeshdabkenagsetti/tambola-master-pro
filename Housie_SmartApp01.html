@@ -1,0 +1,665 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TambolaMaster Pro</title>
+    <link rel="manifest" href="manifest.json">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.3/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        body { position: relative; z-index: 0; }
+        .section-container { background: white !important; color: black !important; z-index: 10; position: relative; }
+        .section-container * { color: black !important; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body class="bg-gradient-to-br from-purple-600 to-blue-500 min-h-screen text-white p-4 font-sans">
+    <div class="max-w-lg mx-auto space-y-6">
+        <div class="flex items-center justify-center space-x-4">
+            <img id="event-logo" src="" alt="Event Logo" class="w-16 h-16 object-contain hidden">
+            <h1 class="text-3xl font-bold text-center">TambolaMaster Pro</h1>
+        </div>
+        <p class="text-center">Calculate booklet prices and distribute prizes for your Housie/Tambola event!</p>
+
+        <div class="flex flex-wrap justify-center gap-2">
+            <button onclick="toggleDarkMode()" class="bg-yellow-400 text-black px-4 py-2 rounded-lg shadow hover:bg-yellow-500 transition">Toggle Dark Mode</button>
+            <button onclick="toggleSection('admin-access')" class="bg-green-400 text-black px-4 py-2 rounded-lg shadow hover:bg-green-500 transition">Admin Settings</button>
+            <button onclick="generatePDF()" class="bg-red-400 text-black px-4 py-2 rounded-lg shadow hover:bg-red-500 transition">Generate PDF Report</button>
+            <button onclick="saveData()" class="bg-blue-400 text-black px-4 py-2 rounded-lg shadow hover:bg-blue-500 transition">Save Data</button>
+            <button onclick="resetForm()" class="bg-gray-400 text-black px-4 py-2 rounded-lg shadow hover:bg-gray-500 transition">Reset Form</button>
+        </div>
+
+        <div id="admin-access" class="hidden section-container p-4 rounded-lg shadow-lg">
+            <h2 class="text-xl font-semibold">Admin Access</h2>
+            <label class="block">Enter Password:</label>
+            <input type="password" id="password" class="w-full p-2 border rounded">
+            <button onclick="checkPassword()" class="w-full bg-green-500 text-white p-2 rounded mt-2 hover:bg-green-600 transition">Submit</button>
+            <p id="password-error" class="text-red-500 hidden">Incorrect password. Please try again.</p>
+        </div>
+
+        <div id="admin-settings" class="hidden section-container p-4 rounded-lg shadow-lg">
+            <h2 class="text-xl font-semibold">Admin Settings</h2>
+            <h3 class="font-medium">Upload Event Logo:</h3>
+            <input type="file" id="logo" accept="image/*" class="w-full p-2 border rounded" onchange="displayLogo()">
+            <h3 class="font-medium mt-4">Financial Parameters</h3>
+            <label class="block">Caller Fees (₹):</label>
+            <input type="number" id="caller-fees" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary()">
+            <label class="block">GST Percentage (%):</label>
+            <input type="number" id="gst-percentage" class="w-full p-2 border rounded" min="0" max="100" oninput="updateFinancialSummary()">
+            <h3 class="font-medium mt-4">Game Structure</h3>
+            <label class="block">Number of Regular Rounds:</label>
+            <input type="number" id="regular-rounds" value="3" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary(); calculateSuggestedPrizes()">
+            <label class="block">Number of Bingo Rounds:</label>
+            <input type="number" id="bingo-rounds" value="2" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary(); calculateSuggestedPrizes()">
+            <label class="block">Number of Part Games per Regular Round:</label>
+            <input type="number" id="part-games" value="2" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary(); calculateSuggestedPrizes()">
+            <label class="block">Number of Sheet Prizes per Regular Round:</label>
+            <input type="number" id="sheet-prizes" value="2" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary(); calculateSuggestedPrizes()">
+            <label class="block">Number of Houses per Regular Round:</label>
+            <input type="number" id="houses-regular" value="1" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary(); calculateSuggestedPrizes()">
+            <label class="block">Number of Houses per Bingo Round:</label>
+            <input type="number" id="houses-bingo" value="4" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary(); calculateSuggestedPrizes()">
+            <button onclick="saveSettings()" class="w-full bg-blue-500 text-white p-2 rounded mt-4 hover:bg-blue-600 transition">Save Settings</button>
+        </div>
+
+        <div class="section-container p-4 rounded-lg shadow-lg">
+            <h2 class="text-xl font-semibold">Booklet Pricing</h2>
+            <label class="block">Total Prize Money to Distribute (₹):</label>
+            <input type="number" id="prize-money" class="w-full p-2 border rounded" min="0" oninput="calculateSuggestedPrice()">
+            <button onclick="calculateSuggestedPrice()" class="w-full bg-purple-500 text-white p-2 rounded mt-2 hover:bg-purple-600 transition">Calculate Suggested Price</button>
+            <p>Suggested Booklet Price: ₹<span id="suggested-price">0</span> <button onclick="acceptPrice()" class="bg-green-500 text-white px-2 py-1 rounded hover:bg-green-600 transition">Accept</button></p>
+            <label class="block">Target Number of Booklets to Sell:</label>
+            <input type="number" id="target-booklets" class="w-full p-2 border rounded" readonly>
+            <label class="block">Actual Booklets Sold:</label>
+            <input type="number" id="actual-booklets" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary()">
+            <label class="block">Actual Booklet Price (₹):</label>
+            <input type="number" id="actual-price" class="w-full p-2 border rounded" min="0" oninput="updateFinancialSummary()">
+        </div>
+
+        <div class="section-container p-4 rounded-lg shadow-lg">
+            <h2 class="text-xl font-semibold">Round Prize Distribution</h2>
+            <button onclick="toggleSection('regular-round'); calculateSuggestedPrizes();" class="w-full bg-blue-500 text-white p-2 rounded mb-2 hover:bg-blue-600 transition">Toggle Regular Round</button>
+            <div id="regular-round" class="p-2">
+                <table class="w-full border-collapse mb-2">
+                    <tr><th class="border p-2 bg-gray-100">Prize Type</th><th class="border p-2 bg-gray-100">Suggested (₹)</th><th class="border p-2 bg-gray-100">Override (₹)</th><th class="border p-2 bg-gray-100">Difference (₹)</th><th class="border p-2 bg-gray-100">Action</th></tr>
+                    <tr>
+                        <td class="border p-2">Part Game 1</td>
+                        <td class="border p-2" id="suggested-part-game-1">0</td>
+                        <td class="border p-2"><input type="number" id="override-part-game-1" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('regular')"></td>
+                        <td class="border p-2" id="diff-part-game-1">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('part-game-1')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('part-game-1')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">Part Game 2</td>
+                        <td class="border p-2" id="suggested-part-game-2">0</td>
+                        <td class="border p-2"><input type="number" id="override-part-game-2" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('regular')"></td>
+                        <td class="border p-2" id="diff-part-game-2">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('part-game-2')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('part-game-2')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">Sheet Prize 1</td>
+                        <td class="border p-2" id="suggested-sheet-prize-1">0</td>
+                        <td class="border p-2"><input type="number" id="override-sheet-prize-1" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('regular')"></td>
+                        <td class="border p-2" id="diff-sheet-prize-1">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('sheet-prize-1')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('sheet-prize-1')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">Sheet Prize 2</td>
+                        <td class="border p-2" id="suggested-sheet-prize-2">0</td>
+                        <td class="border p-2"><input type="number" id="override-sheet-prize-2" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('regular')"></td>
+                        <td class="border p-2" id="diff-sheet-prize-2">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('sheet-prize-2')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('sheet-prize-2')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">House 1</td>
+                        <td class="border p-2" id="suggested-house-1">0</td>
+                        <td class="border p-2"><input type="number" id="override-house-1" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('regular')"></td>
+                        <td class="border p-2" id="diff-house-1">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('house-1')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('house-1')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">House 2</td>
+                        <td class="border p-2" id="suggested-house-2">0</td>
+                        <td class="border p-2"><input type="number" id="override-house-2" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('regular')"></td>
+                        <td class="border p-2" id="diff-house-2">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('house-2')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('house-2')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">House 3</td>
+                        <td class="border p-2" id="suggested-house-3">0</td>
+                        <td class="border p-2"><input type="number" id="override-house-3" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('regular')"></td>
+                        <td class="border p-2" id="diff-house-3">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('house-3')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('house-3')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                </table>
+                <p class="font-semibold">Mini Loss/Gain for Regular Rounds: ₹<span id="regular-mini-summary">0</span></p>
+            </div>
+            <button onclick="toggleSection('bingo-round'); calculateSuggestedPrizes();" class="w-full bg-blue-500 text-white p-2 rounded mb-2 hover:bg-blue-600 transition">Toggle Bingo Round</button>
+            <div id="bingo-round" class="p-2">
+                <table class="w-full border-collapse mb-2">
+                    <tr><th class="border p-2 bg-gray-100">Prize Type</th><th class="border p-2 bg-gray-100">Suggested (₹)</th><th class="border p-2 bg-gray-100">Override (₹)</th><th class="border p-2 bg-gray-100">Difference (₹)</th><th class="border p-2 bg-gray-100">Action</th></tr>
+                    <tr>
+                        <td class="border p-2">House 1</td>
+                        <td class="border p-2" id="suggested-house-bingo-1">0</td>
+                        <td class="border p-2"><input type="number" id="override-house-bingo-1" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('bingo')"></td>
+                        <td class="border p-2" id="diff-house-bingo-1">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('house-bingo-1')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('house-bingo-1')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">House 2</td>
+                        <td class="border p-2" id="suggested-house-bingo-2">0</td>
+                        <td class="border p-2"><input type="number" id="override-house-bingo-2" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('bingo')"></td>
+                        <td class="border p-2" id="diff-house-bingo-2">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('house-bingo-2')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('house-bingo-2')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">House 3</td>
+                        <td class="border p-2" id="suggested-house-bingo-3">0</td>
+                        <td class="border p-2"><input type="number" id="override-house-bingo-3" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('bingo')"></td>
+                        <td class="border p-2" id="diff-house-bingo-3">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('house-bingo-3')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('house-bingo-3')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                    <tr>
+                        <td class="border p-2">House 4</td>
+                        <td class="border p-2" id="suggested-house-bingo-4">0</td>
+                        <td class="border p-2"><input type="number" id="override-house-bingo-4" class="w-full p-1 border rounded" min="0" oninput="updateRoundSummary('bingo')"></td>
+                        <td class="border p-2" id="diff-house-bingo-4">0</td>
+                        <td class="border p-2">
+                            <button onclick="acceptPrize('house-bingo-4')" class="bg-green-500 text-white px-2 py-1 rounded">Accept</button>
+                            <button onclick="rejectPrize('house-bingo-4')" class="bg-red-500 text-white px-2 py-1 rounded ml-1">Reject</button>
+                        </td>
+                    </tr>
+                </table>
+                <p class="font-semibold">Mini Loss/Gain for Bingo Rounds: ₹<span id="bingo-mini-summary">0</span></p>
+            </div>
+            <button onclick="calculatePrizeDistribution()" class="w-full bg-purple-500 text-white p-2 rounded mt-2 hover:bg-purple-600 transition">Calculate Prize Distribution</button>
+        </div>
+
+        <div class="section-container p-4 rounded-lg shadow-lg">
+            <h2 class="text-xl font-semibold">Financial Summary</h2>
+            <table class="w-full border-collapse">
+                <tr><th class="border p-2 bg-gray-100">Description</th><th class="border p-2 bg-gray-100">Amount (₹)</th></tr>
+                <tr><td class="border p-2">Total Regular Rounds Prizes</td><td class="border p-2" id="regular-prizes">0</td></tr>
+                <tr><td class="border p-2">Total Bingo Rounds Prizes</td><td class="border p-2" id="bingo-prizes">0</td></tr>
+                <tr><td class="border p-2">Total Prize Money</td><td class="border p-2" id="total-prize">0</td></tr>
+                <tr><td class="border p-2">Expected Revenue (Target)</td><td class="border p-2" id="expected-revenue">0</td></tr>
+                <tr><td class="border p-2">Actual Revenue</td><td class="border p-2" id="actual-revenue">0</td></tr>
+                <tr><td class="border p-2">Caller Fees</td><td class="border p-2" id="caller-fees-display">0</td></tr>
+                <tr><td class="border p-2">GST</td><td class="border p-2" id="gst-display">0</td></tr>
+                <tr><td class="border p-2">Net Profit/Loss</td><td class="border p-2" id="net-profit">0</td></tr>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Display uploaded logo
+        function displayLogo() {
+            const file = document.getElementById('logo').files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = function(e) {
+                    const logo = document.getElementById('event-logo');
+                    logo.src = e.target.result;
+                    logo.classList.remove('hidden');
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        // Dark mode toggle
+        function toggleDarkMode() {
+            document.body.classList.toggle('bg-gray-900');
+            document.body.classList.toggle('text-white');
+            document.body.classList.toggle('bg-gradient-to-br');
+            document.body.classList.toggle('from-purple-600');
+            document.body.classList.toggle('to-blue-500');
+        }
+
+        // Toggle section visibility
+        function toggleSection(id) {
+            const section = document.getElementById(id);
+            section.classList.toggle('hidden');
+            if (!section.classList.contains('hidden')) {
+                calculateSuggestedPrizes();
+            }
+        }
+
+        // Password check
+        function checkPassword() {
+            const password = document.getElementById('password').value;
+            if (password === 'admin123') {
+                toggleSection('admin-access');
+                toggleSection('admin-settings');
+            } else {
+                document.getElementById('password-error').classList.remove('hidden');
+            }
+        }
+
+        // Save settings and hide admin section
+        function saveSettings() {
+            if (!validateAdminSettings()) {
+                alert('Please enter valid values for all settings (non-negative numbers).');
+                return;
+            }
+            alert('Settings saved!');
+            toggleSection('admin-settings');
+            calculateSuggestedPrizes();
+            updateFinancialSummary();
+        }
+
+        // Validate admin settings
+        function validateAdminSettings() {
+            const inputs = ['caller-fees', 'gst-percentage', 'regular-rounds', 'bingo-rounds', 'part-games', 'sheet-prizes', 'houses-regular', 'houses-bingo'];
+            return inputs.every(id => {
+                const value = parseFloat(document.getElementById(id).value) || 0;
+                return value >= 0;
+            });
+        }
+
+        // Calculate suggested booklet price: 0.00536 * A + 373
+        function calculateSuggestedPrice() {
+            const prizeMoney = parseFloat(document.getElementById('prize-money').value) || 0;
+            if (prizeMoney < 0) {
+                alert('Total Prize Money cannot be negative.');
+                document.getElementById('prize-money').value = '';
+                return;
+            }
+            const suggestedPrice = (0.00536 * prizeMoney + 373).toFixed(2);
+            const suggestedPriceElement = document.getElementById('suggested-price');
+            if (suggestedPriceElement) suggestedPriceElement.textContent = suggestedPrice;
+            const targetBooklets = prizeMoney && suggestedPrice ? Math.ceil(prizeMoney / suggestedPrice) : 0;
+            const targetBookletsElement = document.getElementById('target-booklets');
+            if (targetBookletsElement) targetBookletsElement.value = targetBooklets;
+            calculateSuggestedPrizes();
+            updateFinancialSummary();
+        }
+
+        // Accept suggested booklet price
+        function acceptPrice() {
+            const suggestedPrice = document.getElementById('suggested-price').textContent;
+            const actualPriceElement = document.getElementById('actual-price');
+            if (actualPriceElement) actualPriceElement.value = suggestedPrice;
+            updateFinancialSummary();
+        }
+
+        // Accept suggested prize
+        function acceptPrize(id) {
+            const suggestedElement = document.getElementById(`suggested-${id}`);
+            const overrideElement = document.getElementById(`override-${id}`);
+            if (suggestedElement && overrideElement) {
+                overrideElement.value = parseFloat(suggestedElement.textContent || 0).toFixed(2);
+                updateRoundSummary(id.includes('bingo') ? 'bingo' : 'regular');
+            }
+        }
+
+        // Reject prize (clear override)
+        function rejectPrize(id) {
+            const overrideElement = document.getElementById(`override-${id}`);
+            if (overrideElement) {
+                overrideElement.value = '';
+                updateRoundSummary(id.includes('bingo') ? 'bingo' : 'regular');
+            }
+        }
+
+        // Calculate suggested prizes
+        function calculateSuggestedPrizes() {
+            const prizeMoney = parseFloat(document.getElementById('prize-money').value) || 0;
+            const regularRounds = parseInt(document.getElementById('regular-rounds').value) || 0;
+            const bingoRounds = parseInt(document.getElementById('bingo-rounds').value) || 0;
+            const partGames = parseInt(document.getElementById('part-games').value) || 0;
+            const sheetPrizes = parseInt(document.getElementById('sheet-prizes').value) || 0;
+            const housesRegular = parseInt(document.getElementById('houses-regular').value) || 0;
+            const housesBingo = parseInt(document.getElementById('houses-bingo').value) || 0;
+
+            const totalRounds = regularRounds + bingoRounds;
+            const roundShare = totalRounds ? prizeMoney / totalRounds : 0;
+
+            // For regular round
+            const lineAndSheetShare = roundShare * 0.4 / (partGames + sheetPrizes);
+            const houseShare = roundShare * 0.6;
+            const houseRatios = [0.5, 0.3, 0.2];
+            const suggestedHouseRegular = houseRatios.map(r => (houseShare * r).toFixed(2));
+
+            // For bingo round
+            const bingoHouseRatios = [0.4, 0.3, 0.2, 0.1];
+            const suggestedHouseBingo = bingoHouseRatios.map(r => (roundShare * r).toFixed(2));
+
+            // Update regular prizes (assuming 2 part, 2 sheet, 3 houses)
+            const regularSuggested = {
+                'part-game-1': lineAndSheetShare.toFixed(2),
+                'part-game-2': lineAndSheetShare.toFixed(2),
+                'sheet-prize-1': lineAndSheetShare.toFixed(2),
+                'sheet-prize-2': lineAndSheetShare.toFixed(2),
+                'house-1': suggestedHouseRegular[0],
+                'house-2': suggestedHouseRegular[1],
+                'house-3': suggestedHouseRegular[2]
+            };
+
+            Object.keys(regularSuggested).forEach(id => {
+                const suggestedElement = document.getElementById(`suggested-${id}`);
+                const overrideElement = document.getElementById(`override-${id}`);
+                if (suggestedElement && overrideElement) {
+                    suggestedElement.textContent = regularSuggested[id];
+                    overrideElement.value = regularSuggested[id];
+                }
+            });
+
+            // Update bingo prizes (4 houses)
+            const bingoSuggested = {
+                'house-bingo-1': suggestedHouseBingo[0],
+                'house-bingo-2': suggestedHouseBingo[1],
+                'house-bingo-3': suggestedHouseBingo[2],
+                'house-bingo-4': suggestedHouseBingo[3]
+            };
+
+            Object.keys(bingoSuggested).forEach(id => {
+                const suggestedElement = document.getElementById(`suggested-${id}`);
+                const overrideElement = document.getElementById(`override-${id}`);
+                if (suggestedElement && overrideElement) {
+                    suggestedElement.textContent = bingoSuggested[id];
+                    overrideElement.value = bingoSuggested[id];
+                }
+            });
+
+            updateRoundSummary('regular');
+            updateRoundSummary('bingo');
+        }
+
+        // Update round summaries
+        function updateRoundSummary(type) {
+            let totalDiff = 0;
+            if (type === 'regular') {
+                const prizes = [
+                    'part-game-1', 'part-game-2', 'sheet-prize-1', 'sheet-prize-2',
+                    'house-1', 'house-2', 'house-3'
+                ];
+                totalDiff = prizes.reduce((sum, id) => {
+                    const suggestedElement = document.getElementById(`suggested-${id}`);
+                    const overrideElement = document.getElementById(`override-${id}`);
+                    const diffElement = document.getElementById(`diff-${id}`);
+                    if (suggestedElement && overrideElement && diffElement) {
+                        const suggested = parseFloat(suggestedElement.textContent) || 0;
+                        const override = parseFloat(overrideElement.value) || 0;
+                        const diff = override - suggested;
+                        diffElement.textContent = diff.toFixed(2);
+                        return sum + diff;
+                    }
+                    return sum;
+                }, 0);
+                const regularMiniSummary = document.getElementById('regular-mini-summary');
+                if (regularMiniSummary) regularMiniSummary.textContent = totalDiff.toFixed(2);
+            } else if (type === 'bingo') {
+                const prizes = [
+                    'house-bingo-1', 'house-bingo-2', 'house-bingo-3', 'house-bingo-4'
+                ];
+                totalDiff = prizes.reduce((sum, id) => {
+                    const suggestedElement = document.getElementById(`suggested-${id}`);
+                    const overrideElement = document.getElementById(`override-${id}`);
+                    const diffElement = document.getElementById(`diff-${id}`);
+                    if (suggestedElement && overrideElement && diffElement) {
+                        const suggested = parseFloat(suggestedElement.textContent) || 0;
+                        const override = parseFloat(overrideElement.value) || 0;
+                        const diff = override - suggested;
+                        diffElement.textContent = diff.toFixed(2);
+                        return sum + diff;
+                    }
+                    return sum;
+                }, 0);
+                const bingoMiniSummary = document.getElementById('bingo-mini-summary');
+                if (bingoMiniSummary) bingoMiniSummary.textContent = totalDiff.toFixed(2);
+            }
+            updateFinancialSummary();
+        }
+
+        // Update financial summary
+        function updateFinancialSummary() {
+            const prizeMoney = parseFloat(document.getElementById('prize-money').value) || 0;
+            const callerFees = parseFloat(document.getElementById('caller-fees').value) || 0;
+            const gstPercentage = parseFloat(document.getElementById('gst-percentage').value) || 0;
+            const actualBooklets = parseInt(document.getElementById('actual-booklets').value) || 0;
+            const actualPrice = parseFloat(document.getElementById('actual-price').value) || 0;
+            const suggestedPrice = parseFloat(document.getElementById('suggested-price')?.textContent) || 0;
+
+            // Regular round prizes
+            const regularPrizes = [
+                'part-game-1', 'part-game-2', 'sheet-prize-1', 'sheet-prize-2',
+                'house-1', 'house-2', 'house-3'
+            ].reduce((sum, id) => {
+                const overrideElement = document.getElementById(`override-${id}`);
+                return sum + (overrideElement ? parseFloat(overrideElement.value) || 0 : 0);
+            }, 0);
+
+            // Bingo round prizes
+            const bingoPrizes = [
+                'house-bingo-1', 'house-bingo-2', 'house-bingo-3', 'house-bingo-4'
+            ].reduce((sum, id) => {
+                const overrideElement = document.getElementById(`override-${id}`);
+                return sum + (overrideElement ? parseFloat(overrideElement.value) || 0 : 0);
+            }, 0);
+
+            const totalPrize = regularPrizes + bingoPrizes;
+            const expectedRevenue = suggestedPrice * (parseInt(document.getElementById('target-booklets')?.value) || 0);
+            const actualRevenue = actualBooklets * actualPrice;
+            const gstAmount = actualRevenue * (gstPercentage / 100);
+            const netProfit = actualRevenue - (totalPrize + callerFees + gstAmount);
+
+            const elements = {
+                'regular-prizes': regularPrizes.toFixed(2),
+                'bingo-prizes': bingoPrizes.toFixed(2),
+                'total-prize': totalPrize.toFixed(2),
+                'expected-revenue': expectedRevenue.toFixed(2),
+                'actual-revenue': actualRevenue.toFixed(2),
+                'caller-fees-display': callerFees.toFixed(2),
+                'gst-display': gstAmount.toFixed(2),
+                'net-profit': netProfit.toFixed(2)
+            };
+            Object.keys(elements).forEach(id => {
+                const element = document.getElementById(id);
+                if (element) element.textContent = elements[id];
+            });
+        }
+
+        // Generate PDF
+        function generatePDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            doc.setFontSize(18);
+            doc.text('TambolaMaster Pro Report', 10, 10);
+
+            // Add logo
+            const logo = document.getElementById('event-logo');
+            if (logo.src && !logo.classList.contains('hidden')) {
+                try {
+                    doc.addImage(logo.src, 'PNG', 10, 15, 20, 20);
+                } catch (e) {
+                    console.warn('Failed to add logo to PDF:', e);
+                }
+            }
+
+            // Booklet Pricing
+            doc.setFontSize(12);
+            doc.text('Booklet Pricing', 10, 40);
+            doc.autoTable({
+                head: [['Description', 'Value']],
+                body: [
+                    ['Total Prize Money (₹)', document.getElementById('prize-money').value || '0'],
+                    ['Suggested Booklet Price (₹)', document.getElementById('suggested-price').textContent],
+                    ['Target Booklets', document.getElementById('target-booklets').value || '0'],
+                    ['Actual Booklets Sold', document.getElementById('actual-booklets').value || '0'],
+                    ['Actual Booklet Price (₹)', document.getElementById('actual-price').value || '0']
+                ],
+                startY: 45,
+                theme: 'grid'
+            });
+
+            // Financial Summary
+            doc.text('Financial Summary', 10, doc.lastAutoTable.finalY + 10);
+            doc.autoTable({
+                head: [['Description', 'Amount (₹)']],
+                body: [
+                    ['Total Regular Rounds Prizes', document.getElementById('regular-prizes').textContent],
+                    ['Total Bingo Rounds Prizes', document.getElementById('bingo-prizes').textContent],
+                    ['Total Prize Money', document.getElementById('total-prize').textContent],
+                    ['Expected Revenue (Target)', document.getElementById('expected-revenue').textContent],
+                    ['Actual Revenue', document.getElementById('actual-revenue').textContent],
+                    ['Caller Fees', document.getElementById('caller-fees-display').textContent],
+                    ['GST', document.getElementById('gst-display').textContent],
+                    ['Net Profit/Loss', document.getElementById('net-profit').textContent]
+                ],
+                startY: doc.lastAutoTable.finalY + 15,
+                theme: 'grid'
+            });
+
+            // Regular Round Info
+            doc.text('Regular Round Info', 10, doc.lastAutoTable.finalY + 10);
+            doc.autoTable({
+                head: [['Prize Type', 'Suggested (₹)', 'Override (₹)', 'Difference (₹)']],
+                body: [
+                    ['Part Game 1', document.getElementById('suggested-part-game-1').textContent, document.getElementById('override-part-game-1').value || '0', document.getElementById('diff-part-game-1').textContent],
+                    ['Part Game 2', document.getElementById('suggested-part-game-2').textContent, document.getElementById('override-part-game-2').value || '0', document.getElementById('diff-part-game-2').textContent],
+                    ['Sheet Prize 1', document.getElementById('suggested-sheet-prize-1').textContent, document.getElementById('override-sheet-prize-1').value || '0', document.getElementById('diff-sheet-prize-1').textContent],
+                    ['Sheet Prize 2', document.getElementById('suggested-sheet-prize-2').textContent, document.getElementById('override-sheet-prize-2').value || '0', document.getElementById('diff-sheet-prize-2').textContent],
+                    ['House 1', document.getElementById('suggested-house-1').textContent, document.getElementById('override-house-1').value || '0', document.getElementById('diff-house-1').textContent],
+                    ['House 2', document.getElementById('suggested-house-2').textContent, document.getElementById('override-house-2').value || '0', document.getElementById('diff-house-2').textContent],
+                    ['House 3', document.getElementById('suggested-house-3').textContent, document.getElementById('override-house-3').value || '0', document.getElementById('diff-house-3').textContent]
+                ],
+                startY: doc.lastAutoTable.finalY + 15,
+                theme: 'grid'
+            });
+            doc.text(`Mini Loss/Gain for Regular Rounds: ₹${document.getElementById('regular-mini-summary').textContent}`, 10, doc.lastAutoTable.finalY + 5);
+
+            // Bingo Round Info
+            doc.text('Bingo Round Info', 10, doc.lastAutoTable.finalY + 15);
+            doc.autoTable({
+                head: [['Prize Type', 'Suggested (₹)', 'Override (₹)', 'Difference (₹)']],
+                body: [
+                    ['House 1', document.getElementById('suggested-house-bingo-1').textContent, document.getElementById('override-house-bingo-1').value || '0', document.getElementById('diff-house-bingo-1').textContent],
+                    ['House 2', document.getElementById('suggested-house-bingo-2').textContent, document.getElementById('override-house-bingo-2').value || '0', document.getElementById('diff-house-bingo-2').textContent],
+                    ['House 3', document.getElementById('suggested-house-bingo-3').textContent, document.getElementById('override-house-bingo-3').value || '0', document.getElementById('diff-house-bingo-3').textContent],
+                    ['House 4', document.getElementById('suggested-house-bingo-4').textContent, document.getElementById('override-house-bingo-4').value || '0', document.getElementById('diff-house-bingo-4').textContent]
+                ],
+                startY: doc.lastAutoTable.finalY + 20,
+                theme: 'grid'
+            });
+            doc.text(`Mini Loss/Gain for Bingo Rounds: ₹${document.getElementById('bingo-mini-summary').textContent}`, 10, doc.lastAutoTable.finalY + 5);
+
+            doc.save('TambolaMasterPro_Report.pdf');
+        }
+
+        // Placeholder functions
+        function saveData() { alert('Data saved!'); }
+        function resetForm() {
+            document.querySelectorAll('input').forEach(input => input.value = '');
+            document.getElementById('regular-rounds').value = '3';
+            document.getElementById('bingo-rounds').value = '1';
+            document.getElementById('part-games').value = '2';
+            document.getElementById('sheet-prizes').value = '2';
+            document.getElementById('houses-regular').value = '1';
+            document.getElementById('houses-bingo').value = '4';
+            document.getElementById('suggested-price').textContent = '0';
+            document.getElementById('event-logo').src = '';
+            document.getElementById('event-logo').classList.add('hidden');
+            document.getElementById('regular-round').classList.add('hidden');
+            document.getElementById('bingo-round').classList.add('hidden');
+            document.getElementById('admin-access').classList.add('hidden');
+            document.getElementById('admin-settings').classList.add('hidden');
+            calculateSuggestedPrizes();
+            updateFinancialSummary();
+        }
+        function calculatePrizeDistribution() {
+            calculateSuggestedPrizes();
+            alert('Prize distribution calculated!');
+            updateFinancialSummary();
+        }
+
+        // Register service worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/sw.js').then(reg => {
+                console.log('Service worker registered for scope: ' + reg.scope);
+            }).catch(err => {
+                console.log('Service worker registration failed: ' + err);
+            });
+        }
+
+        // Initial calculation on load
+        window.onload = function() {
+            // Delay calculations to ensure DOM is ready
+            setTimeout(() => {
+                calculateSuggestedPrizes();
+                updateFinancialSummary();
+            }, 0);
+        };
+    </script>
+</body>
+</html>
